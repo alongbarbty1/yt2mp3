@@ -1,0 +1,25 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+.pornhub.org	TRUE	/	TRUE	1799732276	bs	0000000000000000f0db0a3a2ce00080
+.pornhub.org	TRUE	/	TRUE	1799732276	bsdd	0000000000000000f0db0a3a2ce00080
+.pornhub.org	TRUE	/	TRUE	1799732276	ss	248593944355780908
+.pornhub.org	TRUE	/	TRUE	1799732276	sessid	248777127375680222
+.pornhub.org	TRUE	/	TRUE	1770788276	comp_detect-cookies	10541.100000
+.pornhub.org	TRUE	/	TRUE	1770788276	fg_afaf12e314c5419a855ddc0bf120670f	12855.100000
+.pornhub.org	TRUE	/	TRUE	1770788276	fg_55e3b6f0afd46366d6fa797544b15af2	47380.100000
+www.pornhub.org	FALSE	/	TRUE	1799753202	__l	696488B2-42FE722901BB3C91BA-42C0995F
+.pornhub.org	TRUE	/	TRUE	1799732276	cookieConsent	3
+.pornhub.org	TRUE	/	TRUE	1799732304	lvv	649902816420232911
+.pornhub.org	TRUE	/	TRUE	1799732304	vlc	827501197740115165
+.pornhub.org	TRUE	/	TRUE	1769406428	platform	pc
+.pornhub.org	TRUE	/	TRUE	1771393628	fg_439f2555043a44b8bd91161b5deddd29	14386.100000
+www.pornhub.org	FALSE	/	FALSE	1769407997	etavt	%7B%2268dcce77ca4e7%22%3A%229_8_NA_NA%7C7%22%2C%22ph5faebdba99cb7%22%3A%225_2_2_pornhub.related_video.96%7C6%22%2C%226660d7d950ef0%22%3A%229_8_NA_NA%7C5%22%2C%22ph5e17c74096add%22%3A%229_8_NA_NA%7C4%22%2C%2268f8ef5cb2f57%22%3A%224_3_2_pornhub.SearchVideoService.194.195%7C3%22%2C%226929c00045754%22%3A%224_3_2_pornhub.SearchVideoService.194.195%7C2%22%2C%2267b61f581589c%22%3A%224_3_2_pornhub.SearchVideoService.194.195%7C1%22%2C%22ph63c77a8e2b85a%22%3A%224_3_2_pornhub.SearchVideoService.194.195%7C0%22%7D
+.pornhub.org	TRUE	/	TRUE	1769415127	ua	8e253f85246590342756399a57054cb8
+.pornhub.org	TRUE	/	TRUE	1771920727	fg_7d31324eedb583147b6dcbea0051c868	17155.100000
+www.pornhub.org	FALSE	/	TRUE	0	__s	6975D04D-42FE722901BB205978-178B9A29
+www.pornhub.org	FALSE	/	FALSE	0	rp	2862742238:qp/nI1VH008=
+.pornhub.org	TRUE	/	FALSE	1769332330	accessAgeDisclaimerPH	2
+.pornhub.org	TRUE	/	FALSE	1769415135	adBlockAlertHidden	1
+.pornhub.org	TRUE	/	FALSE	1784880739	g_state	{"i_l":0,"i_ll":1769328739935,"i_b":"KBJmXpkpOvcffxsVFCBXpNAjJNA00b7jUoZmKnW/wWI","i_e":{"enable_itp_optimization":0}}
