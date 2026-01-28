@@ -18,4 +18,7 @@ Thumbs.db
 .git/
 .gitignore
 README.md
-render.yaml
+render_build.sh
+cookies_example.txt
+test*.py
+*.md
