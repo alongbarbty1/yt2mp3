@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: youtube-music-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: ALLOWED_USER_IDS
+        sync: false
+        optional: true
+      - key: PORT
+        value: 8443
+      - key: WEBHOOK_URL
+        fromService:
+          type: web
+          name: youtube-music-bot
+          property: url
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: temp
+      mountPath: /tmp
+      sizeGB: 1
