@@ -3,6 +3,7 @@ import logging
 import asyncio
 import tempfile
 import shutil
+import threading
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -23,6 +24,10 @@ from telegram.constants import ParseMode
 import yt_dlp
 import re
 
+# Flask web server
+from flask import Flask, render_template_string, jsonify, request
+import json
+
 # Load environment variables
 load_dotenv()
 
@@ -38,9 +43,211 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 ALLOWED_USER_IDS = os.getenv("ALLOWED_USER_IDS", "").split(",")
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB Telegram limit
 COOKIES_FILE = "cookies.txt" if os.path.exists("cookies.txt") else None
+PORT = int(os.getenv("PORT", 8443))
 
-# Conversation states
-CHOOSING, DOWNLOADING = range(2)
+# Bot status
+bot_status = {
+    "status": "initializing",
+    "start_time": datetime.now(),
+    "downloads_processed": 0,
+    "active_downloads": 0,
+    "last_activity": None,
+    "bot_username": None,
+    "webhook_set": False
+}
+
+# HTML template for web interface
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Downloader Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+        }
+        h1 { color: #333; margin-bottom: 10px; font-size: 2.5em; }
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+            background-color: {{ 'green' if bot_status.status == 'running' else 'orange' if bot_status.status == 'initializing' else 'red' }};
+            animation: {{ 'pulse 2s infinite' if bot_status.status == 'running' else 'none' }};
+        }
+        @keyframes pulse {
+            0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; }
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .footer { margin-top: 30px; color: #777; font-size: 0.9em; }
+        .error { color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .success { color: #28a745; background: #d4edda; padding: 10px; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🎵</div>
+            <h1>YouTube Music Downloader Bot</h1>
+            <p class="subtitle">Powered by Python & Docker • Running on Render</p>
+        </div>
+        
+        <div class="status-card">
+            <h2><span class="status-dot"></span> Bot Status: {{ bot_status.status|upper }}</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>Uptime:</strong><br>{{ bot_status.uptime }}
+                </div>
+                <div class="info-item">
+                    <strong>Downloads:</strong><br>{{ bot_status.downloads_processed }}
+                </div>
+                <div class="info-item">
+                    <strong>Active:</strong><br>{{ bot_status.active_downloads }}
+                </div>
+                <div class="info-item">
+                    <strong>Mode:</strong><br>{{ 'Webhook' if bot_status.webhook_set else 'Polling' }}
+                </div>
+            </div>
+        </div>
+        
+        <div class="status-card">
+            <h3>🐳 Docker Container</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>Port:</strong><br>{{ bot_status.port }}
+                </div>
+                <div class="info-item">
+                    <strong>Memory:</strong><br>512 MB (Render Free)
+                </div>
+                <div class="info-item">
+                    <strong>Cookies:</strong><br>{{ '✅ Enabled' if bot_status.cookies_enabled else '❌ Disabled' }}
+                </div>
+                <div class="info-item">
+                    <strong>Python:</strong><br>{{ bot_status.python_version }}
+                </div>
+            </div>
+        </div>
+        
+        {% if bot_status.error %}
+        <div class="error">
+            <strong>Error:</strong> {{ bot_status.error }}
+        </div>
+        {% endif %}
+        
+        {% if bot_status.success %}
+        <div class="success">
+            {{ bot_status.success }}
+        </div>
+        {% endif %}
+        
+        <div class="footer">
+            <p>Bot Username: @{{ bot_status.bot_username or 'Not set' }}</p>
+            <p>Current Time: {{ bot_status.current_time }}</p>
+        </div>
+    </div>
+    
+    <script>
+        setTimeout(() => window.location.reload(), 30000);
+    </script>
+</body>
+</html>
+"""
+
+# Initialize Flask app
+flask_app = Flask(__name__)
+
+# Global application variable
+application = None
+
+@flask_app.route('/')
+def index():
+    """Render main status page"""
+    import platform
+    
+    # Calculate uptime
+    uptime = datetime.now() - bot_status["start_time"]
+    hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+    
+    return render_template_string(HTML_TEMPLATE, bot_status={
+        **bot_status,
+        "uptime": uptime_str,
+        "port": PORT,
+        "cookies_enabled": bool(COOKIES_FILE),
+        "python_version": platform.python_version(),
+        "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+    })
+
+@flask_app.route('/health')
+def health():
+    """Health check endpoint for Render"""
+    return jsonify({
+        "status": "healthy" if bot_status["status"] == "running" else "starting",
+        "bot": bot_status["status"],
+        "timestamp": datetime.now().isoformat(),
+        "service": "youtube-music-bot",
+        "port": PORT
+    })
+
+@flask_app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+async def webhook():
+    """Handle Telegram webhook updates"""
+    if application is None:
+        return "Bot not initialized", 503
+    
+    update = Update.de_json(await request.get_json(), application.bot)
+    await application.process_update(update)
+    return "OK"
 
 class YouTubeMusicDownloader:
     def __init__(self):
@@ -60,17 +267,31 @@ class YouTubeMusicDownloader:
             'ignoreerrors': False,
             'logtostderr': False,
             'source_address': '0.0.0.0',
+            # Add headers to avoid bot detection
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
         }
         
-        # Add cookies if available
         if COOKIES_FILE:
             self.ydl_opts['cookiefile'] = COOKIES_FILE
+            logger.info(f"Using cookies file: {COOKIES_FILE}")
             
-        # For video info extraction
         self.info_opts = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
         }
         if COOKIES_FILE:
             self.info_opts['cookiefile'] = COOKIES_FILE
@@ -90,7 +311,9 @@ class YouTubeMusicDownloader:
                 }
         except Exception as e:
             logger.error(f"Error extracting video info: {e}")
-            return None
+            if "Sign in to confirm" in str(e) or "age-restricted" in str(e).lower():
+                return {"error": "age_restricted", "message": "Age-restricted content. Cookies.txt required."}
+            return {"error": str(e)}
     
     async def download_audio(self, url, chat_id):
         """Download audio from YouTube URL"""
@@ -98,36 +321,29 @@ class YouTubeMusicDownloader:
         output_path = None
         
         try:
-            # Update output template for temp directory
             opts = self.ydl_opts.copy()
             opts['outtmpl'] = os.path.join(temp_dir, '%(title)s.%(ext)s')
             
-            # Download the audio
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 
-                # Find the downloaded file
                 downloaded_files = list(Path(temp_dir).glob("*.mp3"))
                 if downloaded_files:
                     output_path = downloaded_files[0]
                     
-                    # Check file size
                     file_size = output_path.stat().st_size
                     if file_size > MAX_FILE_SIZE:
-                        # Try to compress to lower quality
                         return await self.download_lower_quality(url, temp_dir, chat_id)
                     
                     return output_path
                 
         except Exception as e:
             logger.error(f"Error downloading audio: {e}")
-            if "Sign in to confirm your age" in str(e):
+            if "Sign in to confirm" in str(e) or "age-restricted" in str(e).lower():
                 return "age_restricted"
             return None
         finally:
-            # Cleanup other files in temp directory
             if output_path:
-                # Keep only the output file, delete others
                 for file in Path(temp_dir).glob("*"):
                     if file != output_path:
                         try:
@@ -135,7 +351,6 @@ class YouTubeMusicDownloader:
                                 file.unlink()
                         except:
                             pass
-            # Temp directory will be cleaned up by caller
         return None
     
     async def download_lower_quality(self, url, temp_dir, chat_id):
@@ -170,9 +385,7 @@ class TelegramBot:
         user_id = str(update.effective_user.id)
         
         if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
-            await update.message.reply_text(
-                "⚠️ You are not authorized to use this bot."
-            )
+            await update.message.reply_text("⚠️ You are not authorized to use this bot.")
             return
         
         welcome_text = """
@@ -180,146 +393,134 @@ class TelegramBot:
 
 Send me a YouTube Music link and I'll download it for you!
 
-*Supported URLs:*
-• YouTube Music tracks
-• YouTube videos
-• Playlists (single tracks only)
-
-*Features:*
-✅ High quality MP3 audio
-✅ Metadata preservation
-✅ Fast downloads
-✅ Direct Telegram upload
-
 *Commands:*
 /start - Show this message
 /help - Get help
-/cancel - Cancel current operation
+/status - Check bot status
 
 Simply send a YouTube link to get started!
-        """
+"""
         
         await update.message.reply_text(
             welcome_text,
             parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=True
         )
+        
+        bot_status["last_activity"] = datetime.now().strftime("%H:%M:%S")
+    
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Send bot status to user"""
+        uptime = datetime.now() - bot_status["start_time"]
+        hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        status_text = f"""
+🤖 *Bot Status Report*
+
+*Status:* {'🟢 Running' if bot_status['status'] == 'running' else '🟡 Initializing'}
+*Uptime:* {hours}h {minutes}m {seconds}s
+*Downloads:* {bot_status['downloads_processed']}
+*Active:* {bot_status['active_downloads']}
+*Mode:* {'Webhook ✅' if bot_status['webhook_set'] else 'Polling ⚠️'}
+*Cookies:* {'✅ Enabled' if COOKIES_FILE else '❌ Disabled'}
+
+*Web Interface:* Available
+"""
+        
+        await update.message.reply_text(
+            status_text,
+            parse_mode=ParseMode.MARKDOWN
+        )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send help message"""
         help_text = """
-*How to use this bot:*
+*How to use:*
 
-1. Copy a YouTube Music or YouTube URL
-2. Paste it here
-3. Wait for the download to complete
-4. Receive the audio file directly in Telegram
+1. Send a YouTube Music or YouTube URL
+2. Wait for download to complete
+3. Receive MP3 file in Telegram
 
 *Tips:*
-• Maximum file size: 50MB (Telegram limit)
-• For longer videos, lower quality audio is automatically used
-• Age-restricted videos require cookies.txt setup
-
-*Need help?*
-Contact the bot administrator.
-        """
+• Max file size: 50MB
+• Max duration: 30 minutes
+• Age-restricted videos require cookies.txt
+"""
         
         await update.message.reply_text(
             help_text,
             parse_mode=ParseMode.MARKDOWN
         )
     
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Cancel the current operation"""
-        await update.message.reply_text(
-            "Operation cancelled."
-        )
-        return ConversationHandler.END
-    
     async def handle_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming YouTube URLs"""
         user_id = str(update.effective_user.id)
         
-        # Check authorization
         if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
-            await update.message.reply_text(
-                "⚠️ You are not authorized to use this bot."
-            )
+            await update.message.reply_text("⚠️ You are not authorized to use this bot.")
             return
         
         url = update.message.text.strip()
         
-        # Validate YouTube URL
         if not self._is_valid_youtube_url(url):
-            await update.message.reply_text(
-                "❌ Please send a valid YouTube or YouTube Music URL."
-            )
+            await update.message.reply_text("❌ Please send a valid YouTube or YouTube Music URL.")
             return
         
-        # Check if user already has an active download
         if user_id in self.active_downloads:
-            await update.message.reply_text(
-                "⏳ You already have a download in progress. Please wait..."
-            )
+            await update.message.reply_text("⏳ You already have a download in progress. Please wait...")
             return
         
-        # Mark user as downloading
         self.active_downloads[user_id] = True
+        bot_status["active_downloads"] = len(self.active_downloads)
         
         try:
-            # Send initial processing message
-            status_msg = await update.message.reply_text(
-                "🔍 *Processing your request...*",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            status_msg = await update.message.reply_text("🔍 *Processing...*", parse_mode=ParseMode.MARKDOWN)
             
-            # Extract video information
             await status_msg.edit_text("📥 *Fetching video information...*")
             video_info = self.downloader.extract_video_info(url)
+            
+            if isinstance(video_info, dict) and "error" in video_info:
+                if video_info["error"] == "age_restricted":
+                    await status_msg.edit_text("🔞 *Age-restricted content*\n\nThis video requires cookies.txt setup.")
+                else:
+                    await status_msg.edit_text(f"❌ Error: {video_info.get('message', 'Unknown error')}")
+                del self.active_downloads[user_id]
+                bot_status["active_downloads"] = len(self.active_downloads)
+                return
             
             if not video_info:
                 await status_msg.edit_text("❌ Could not fetch video information.")
                 del self.active_downloads[user_id]
+                bot_status["active_downloads"] = len(self.active_downloads)
                 return
             
-            # Check duration (limit to 30 minutes for free tier)
-            if video_info['duration'] > 1800:  # 30 minutes
-                await status_msg.edit_text(
-                    "❌ Video is too long (max 30 minutes for free tier)."
-                )
+            if video_info['duration'] > 1800:
+                await status_msg.edit_text("❌ Video is too long (max 30 minutes).")
                 del self.active_downloads[user_id]
+                bot_status["active_downloads"] = len(self.active_downloads)
                 return
             
-            # Show video info
             info_text = f"""
 🎵 *Track Info:*
 • *Title:* {video_info['title'][:100]}
 • *Artist:* {video_info['uploader']}
 • *Duration:* {video_info['duration_string']}
 
-⬇️ *Downloading audio...* This may take a moment.
+⬇️ *Downloading audio...*
             """
             
-            await status_msg.edit_text(
-                info_text,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await status_msg.edit_text(info_text, parse_mode=ParseMode.MARKDOWN)
             
-            # Download the audio
             temp_dir = tempfile.mkdtemp()
             try:
                 audio_file = await self.downloader.download_audio(url, user_id)
                 
                 if audio_file == "age_restricted":
-                    await status_msg.edit_text(
-                        "🔞 This video is age-restricted. Cookies.txt is required."
-                    )
+                    await status_msg.edit_text("🔞 Age-restricted. Need cookies.txt")
                 elif audio_file == "file_too_large":
-                    await status_msg.edit_text(
-                        "📁 File is too large (>50MB). Try a shorter video."
-                    )
+                    await status_msg.edit_text("📁 File too large (>50MB). Try shorter video.")
                 elif audio_file and os.path.exists(audio_file):
-                    # Send the audio file
                     await status_msg.edit_text("📤 *Uploading to Telegram...*")
                     
                     with open(audio_file, 'rb') as audio:
@@ -332,12 +533,12 @@ Contact the bot administrator.
                             caption=f"🎵 {video_info['title']}\n👤 {video_info['uploader']}"
                         )
                     
+                    bot_status["downloads_processed"] += 1
                     await status_msg.delete()
                 else:
-                    await status_msg.edit_text("❌ Download failed. Please try again.")
+                    await status_msg.edit_text("❌ Download failed. Try again.")
                     
             finally:
-                # Cleanup temporary files
                 try:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 except:
@@ -345,13 +546,12 @@ Contact the bot administrator.
                 
         except Exception as e:
             logger.error(f"Error in handle_url: {e}")
-            await update.message.reply_text(
-                f"❌ An error occurred: {str(e)}"
-            )
+            await update.message.reply_text(f"❌ Error: {str(e)}")
         finally:
-            # Remove user from active downloads
             if user_id in self.active_downloads:
                 del self.active_downloads[user_id]
+                bot_status["active_downloads"] = len(self.active_downloads)
+            bot_status["last_activity"] = datetime.now().strftime("%H:%M:%S")
     
     def _is_valid_youtube_url(self, url: str) -> bool:
         """Validate YouTube URL"""
@@ -365,12 +565,12 @@ Contact the bot administrator.
         logger.error(f"Update {update} caused error {context.error}")
         
         if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "❌ An unexpected error occurred. Please try again later."
-            )
+            await update.effective_message.reply_text("❌ An error occurred. Please try again.")
 
-def main():
-    """Start the bot"""
+async def run_bot():
+    """Run the Telegram bot"""
+    global application
+    
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN environment variable is required")
     
@@ -380,10 +580,18 @@ def main():
     # Initialize bot
     bot = TelegramBot()
     
+    # Get bot info
+    try:
+        bot_info = await application.bot.get_me()
+        bot_status["bot_username"] = bot_info.username
+        logger.info(f"Bot started: @{bot_info.username}")
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {e}")
+    
     # Add handlers
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("help", bot.help_command))
-    application.add_handler(CommandHandler("cancel", bot.cancel))
+    application.add_handler(CommandHandler("status", bot.status_command))
     
     # Add message handler for URLs
     application.add_handler(MessageHandler(
@@ -394,28 +602,53 @@ def main():
     # Add error handler
     application.add_error_handler(bot.error_handler)
     
-    # Start the bot
-    print("🤖 YouTube Music Downloader Bot is starting...")
-    print("📁 Cookies file:", "Available" if COOKIES_FILE else "Not found")
+    # Update bot status
+    bot_status["status"] = "running"
     
-    # For Render deployment
-    port = int(os.getenv("PORT", 8443))
-    
-    # Start webhook for production
-    webhook_url = os.getenv("WEBHOOK_URL")
+    # Check if we should use webhook (Render provides a URL)
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     
     if webhook_url:
-        # Production with webhook
-        application.run_webhook(
+        # Set webhook for production
+        webhook_url = f"{webhook_url}/{TELEGRAM_TOKEN}"
+        await application.bot.set_webhook(webhook_url)
+        bot_status["webhook_set"] = True
+        logger.info(f"Webhook set: {webhook_url[:50]}...")
+        
+        # Start webhook
+        await application.run_webhook(
             listen="0.0.0.0",
-            port=port,
+            port=PORT,
             url_path=TELEGRAM_TOKEN,
-            webhook_url=f"{webhook_url}/{TELEGRAM_TOKEN}"
+            webhook_url=webhook_url,
+            secret_token=None
         )
     else:
         # Development with polling
-        print("🔄 Starting in polling mode...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        bot_status["webhook_set"] = False
+        logger.info("Starting in polling mode...")
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+def start_services():
+    """Start both Flask and Telegram bot"""
+    import threading
+    
+    # Start Flask in a separate thread
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True, use_reloader=False)
+    
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Start Telegram bot in main thread
+    asyncio.run(run_bot())
 
 if __name__ == "__main__":
-    main()
+    print(f"🤖 Starting YouTube Music Downloader Bot...")
+    print(f"🌐 Web interface on port: {PORT}")
+    print(f"🔧 Python: {os.sys.version}")
+    print(f"🍪 Cookies: {'Enabled' if COOKIES_FILE else 'Disabled'}")
+    print(f"🐳 Docker: Running")
+    print(f"⚡ Render Free Tier: Active")
+    
+    start_services()
